@@ -8,7 +8,7 @@
     <param name="csv_path_3" type="path" mode="file" gui-text="CSV 3 (Optional)"></param>
     <param name="csv_path_4" type="path" mode="file" gui-text="CSV 4 (Optional)"></param>
     <param name="csv_path_5" type="path" mode="file" gui-text="CSV 5 (Optional)"></param>
-    <effect>
+    <effect needs-live-preview="false">
         <object-type>all</object-type>
         <effects-menu>
             <submenu name="Export"/>
