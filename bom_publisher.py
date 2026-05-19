@@ -227,9 +227,19 @@ class BomPdfPublisher(inkex.EffectExtension):
             if path and os.path.isfile(path) and path.lower().endswith(".csv"):
                 csv_files.append(path)
 
+        # 3. Auto-Detect Fallback: If no files were manually selected, check the SVG folder
         if not csv_files:
-            inkex.utils.errormsg("No valid CSV files were selected.")
-            return
+            if target_dir and os.path.exists(target_dir):
+                for f in os.listdir(target_dir):
+                    if f.lower().endswith(".csv"):
+                        csv_files.append(os.path.join(target_dir, f))
+
+            # If it's STILL empty after auto-detecting, bail out.
+            if not csv_files:
+                inkex.utils.errormsg(
+                    "No CSV files were selected in the menu, and no CSV files were found automatically in the SVG's folder."
+                )
+                return
 
         bom_data_list = []
         for csv_file in csv_files:
