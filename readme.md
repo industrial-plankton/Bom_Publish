@@ -1,6 +1,6 @@
-# Inkcape Bom Publisher
+# Inkscape Bom Publisher
 
-Extention that:
+Extension that:
 
 - PDFs the svg
 - asks for a .csv BOM
@@ -14,4 +14,4 @@ Restart Inkscape if open
 
 ## Usage
 
-Extenstions -> Export -> Publish PDF with BOM
+Extensions -> Export -> Publish PDF with BOM

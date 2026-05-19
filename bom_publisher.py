@@ -10,7 +10,7 @@ from inkex.command import inkscape
 
 
 def get_freq_tag(pn, desc):
-    combined = (str(pn) + " " + str(desc)).lower()
+    combined = f"{pn} {desc}".lower()
     if "50 hz" in combined or "50hz" in combined:
         return "50 Hz"
     if "60 hz" in combined or "60hz" in combined:
@@ -66,10 +66,12 @@ class BomPdfPublisher(inkex.EffectExtension):
         if fg_index != -1:
             rows.pop(fg_index)
 
+        # Drop 'Type' column
         if max_cols > 0:
             rows = [r[1:] for r in rows]
             max_cols -= 1
 
+        # Drop up to 2 empty trailing columns
         for _ in range(2):
             if max_cols > 0 and all(row[-1].strip() == "" for row in rows):
                 max_cols -= 1
@@ -78,8 +80,8 @@ class BomPdfPublisher(inkex.EffectExtension):
         return {"fg_pn": fg_pn, "fg_desc": fg_desc, "rows": rows}
 
     def layout_bom(self, raw_bom):
-        title_segments = raw_bom["title_segments"]
-        rows = raw_bom["rows"]
+        title_segments = raw_bom.get("title_segments", [])
+        rows = raw_bom.get("rows", [])
 
         if not rows:
             return None
@@ -96,7 +98,6 @@ class BomPdfPublisher(inkex.EffectExtension):
         bom_page_width = total_table_width + (margin * 2)
 
         # --- TITLE WRAPPING LOGIC ---
-        # Calculate approx. max characters per line for a 16px sans-serif font (~8.5px wide per char)
         chars_per_line = max(10, int(total_table_width / 8.5))
         title_lines = []
         current_line = []
@@ -104,15 +105,14 @@ class BomPdfPublisher(inkex.EffectExtension):
 
         for seg in title_segments:
             link = seg["link"]
-            # Split the text by spaces while preserving them so we can break gracefully on words
-            words = str(seg["text"]).split(" ")
+            words = seg["text"].split(" ")
+
             for i, word in enumerate(words):
                 word_w_space = word + (" " if i < len(words) - 1 else "")
 
                 if not word_w_space:
                     continue
 
-                # If adding this word exceeds the line length, wrap to a new line
                 if (
                     current_line_len + len(word_w_space) > chars_per_line
                     and current_line_len > 0
@@ -120,13 +120,10 @@ class BomPdfPublisher(inkex.EffectExtension):
                     title_lines.append(current_line)
                     current_line = []
                     current_line_len = 0
-                    word_w_space = (
-                        word_w_space.lstrip()
-                    )  # Prevent line from starting with a space
+                    word_w_space = word_w_space.lstrip()
                     if not word_w_space:
                         continue
 
-                # Merge into the existing segment block if it shares the same link to prevent fragmented tags
                 if current_line and current_line[-1]["link"] == link:
                     current_line[-1]["text"] += word_w_space
                 else:
@@ -137,8 +134,6 @@ class BomPdfPublisher(inkex.EffectExtension):
             title_lines.append(current_line)
 
         title_line_height = 20
-        # Calculate total space needed for the title block before rendering the table
-        # 16px is added to shift the baseline of the first line down properly
         title_space = 16 + (len(title_lines) * title_line_height) + 15
 
         # --- TABLE RENDERING LOGIC ---
@@ -153,15 +148,15 @@ class BomPdfPublisher(inkex.EffectExtension):
             for col_idx, cell_text in enumerate(row):
                 if col_idx == 1:
                     cell_chars_per_line = int(col_widths[col_idx] / 6.5)
-                    wrapped = textwrap.wrap(str(cell_text), width=cell_chars_per_line)
+                    wrapped = textwrap.wrap(cell_text, width=cell_chars_per_line)
                     if not wrapped:
                         wrapped = [""]
                 else:
-                    wrapped = [str(cell_text)]
+                    wrapped = [cell_text]
 
                 max_lines = max(max_lines, len(wrapped))
                 processed_cells.append(
-                    {"lines": wrapped, "original": str(cell_text).strip()}
+                    {"lines": wrapped, "original": cell_text.strip()}
                 )
 
             row_height = (max_lines * line_height) + padding_y
@@ -440,8 +435,8 @@ class BomPdfPublisher(inkex.EffectExtension):
             line_height = bom_data["line_height"]
             col_widths = bom_data["col_widths"]
 
-            def get_col_x(idx):
-                return sum(col_widths[:idx])
+            # Pre-calculate x-coordinates for all columns to avoid recalculating in the drawing loop
+            col_x_offsets = [sum(col_widths[:idx]) for idx in range(len(col_widths))]
 
             group = inkex.Group()
             group.set("id", f"bom_table_group_{i}")
@@ -453,7 +448,6 @@ class BomPdfPublisher(inkex.EffectExtension):
             for line_idx, line_segs in enumerate(bom_data["title_lines"]):
                 title_elem = inkex.TextElement()
                 title_elem.set("x", "0")
-                # Drop baseline relative to the line index to properly stack them
                 title_elem.set(
                     "y", str(16 + (line_idx * bom_data["title_line_height"]))
                 )
@@ -495,7 +489,7 @@ class BomPdfPublisher(inkex.EffectExtension):
                 for col_idx, cell_data in enumerate(row_data["cells"]):
                     lines = cell_data["lines"]
                     original_text = cell_data["original"]
-                    col_x = get_col_x(col_idx)
+                    col_x = col_x_offsets[col_idx]
 
                     text_elem = inkex.TextElement()
                     text_elem.style = {
