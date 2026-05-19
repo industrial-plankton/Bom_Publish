@@ -18,7 +18,9 @@ class BomPdfPublisher(inkex.EffectExtension):
         )
 
     def setup_pages(self, bom_width, bom_height):
-        # Clean up old BOMs from previous runs
+        self.added_original_page = False
+
+        # Clean up old BOMs from previous runs (in case the file was manually saved with one)
         for old_bom in self.svg.xpath("//*[@id='bom_table_group']"):
             old_bom.getparent().remove(old_bom)
         for old_page in self.svg.xpath("//inkscape:page[@id='bom_page']"):
@@ -34,6 +36,7 @@ class BomPdfPublisher(inkex.EffectExtension):
 
         # Ensure Page 1 is explicitly defined
         if not pages:
+            self.added_original_page = True
             lxml.etree.SubElement(
                 namedview,
                 inkex.addNS("page", "inkscape"),
@@ -127,7 +130,6 @@ class BomPdfPublisher(inkex.EffectExtension):
 
                 max_lines = max(max_lines, len(wrapped))
 
-                # Store the wrapped lines alongside the raw text needed for the URL
                 processed_cells.append(
                     {"lines": wrapped, "original": cell_text.strip()}
                 )
@@ -167,10 +169,9 @@ class BomPdfPublisher(inkex.EffectExtension):
                 # Format column 2 (index 1) as a hyperlink
                 is_link = col_idx == 1 and row_idx > 0
                 if is_link:
-                    text_elem.style["fill"] = "#0056b3"  # Blue link color
+                    text_elem.style["fill"] = "#0056b3"
                     text_elem.style["text-decoration"] = "underline"
 
-                # Render each wrapped line as a tspan element stacked vertically
                 for line_idx, line in enumerate(lines):
                     tspan = inkex.Tspan()
                     tspan.set("x", str(col_x))
@@ -180,9 +181,7 @@ class BomPdfPublisher(inkex.EffectExtension):
                     tspan.text = line
                     text_elem.append(tspan)
 
-                # If it's a link, wrap the text element in an SVG Anchor (<a>) tag
                 if is_link and original_text:
-                    # Strip everything after the first dash for the URL
                     base_pn = original_text.split("-")[0]
                     a = lxml.etree.Element("{http://www.w3.org/2000/svg}a")
                     a.set(
@@ -196,7 +195,6 @@ class BomPdfPublisher(inkex.EffectExtension):
 
             current_y += row_data["height"]
 
-            # Draw a line immediately after the first row
             if row_idx == 0:
                 line = inkex.PathElement()
                 line.set("d", f"M 0,{current_y} L {total_table_width},{current_y}")
@@ -229,6 +227,16 @@ class BomPdfPublisher(inkex.EffectExtension):
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+
+        # 8. Clean up the document before passing it back to the live Inkscape GUI
+        for bom_elem in self.svg.xpath("//*[@id='bom_table_group']"):
+            bom_elem.getparent().remove(bom_elem)
+        for page_elem in self.svg.xpath("//inkscape:page[@id='bom_page']"):
+            page_elem.getparent().remove(page_elem)
+
+        if getattr(self, "added_original_page", False):
+            for orig_page in self.svg.xpath("//inkscape:page[@id='original_page']"):
+                orig_page.getparent().remove(orig_page)
 
         inkex.utils.errormsg(f"Success: PDF saved to {self.options.pdf_path}")
 
