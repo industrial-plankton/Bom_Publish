@@ -9,7 +9,7 @@ Extension that:
 
 ## Install
 
-copy files into $env:APPDATA\inkscape\extensions\
+copy this folder into $env:APPDATA\inkscape\extensions\
 Restart Inkscape if open
 
 ## Usage
