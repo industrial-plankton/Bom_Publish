@@ -1,0 +1,15 @@
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+    <name>Publish PDF with BOM</name>
+    <id>org.eco_pipeline.export.bom_pdf</id>
+    <param name="pdf_path" type="path" mode="file_new" gui-text="Output PDF Location">C:\Users\User\Documents\output.pdf</param>
+    <param name="csv_path" type="path" mode="file" gui-text="Input CSV BOM">C:\Users\User\Documents\bom.csv</param>
+    <effect>
+        <object-type>all</object-type>
+        <effects-menu>
+            <submenu name="Export"/>
+        </effects-menu>
+    </effect>
+    <script>
+        <command location="inx" interpreter="python">bom_publisher.py</command>
+    </script>
+</inkscape-extension>
