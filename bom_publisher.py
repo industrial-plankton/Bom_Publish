@@ -20,7 +20,6 @@ class BomPdfPublisher(inkex.EffectExtension):
     def setup_pages(self, bom_width, bom_height):
         self.added_original_page = False
 
-        # Clean up old BOMs from previous runs (in case the file was manually saved with one)
         for old_bom in self.svg.xpath("//*[@id='bom_table_group']"):
             old_bom.getparent().remove(old_bom)
         for old_page in self.svg.xpath("//inkscape:page[@id='bom_page']"):
@@ -34,7 +33,6 @@ class BomPdfPublisher(inkex.EffectExtension):
         namedview = namedviews[0]
         pages = self.svg.xpath("//sodipodi:namedview/inkscape:page")
 
-        # Ensure Page 1 is explicitly defined
         if not pages:
             self.added_original_page = True
             lxml.etree.SubElement(
@@ -89,7 +87,31 @@ class BomPdfPublisher(inkex.EffectExtension):
         max_cols = max(len(r) for r in rows)
         rows = [r + [""] * (max_cols - len(r)) for r in rows]
 
-        # 2. Drop up to 2 trailing columns if they are completely blank
+        # 2. Extract the "Finished Good" row to use as a title
+        title_text = "Bill of Materials"
+        fg_index = -1
+        for i, row in enumerate(rows):
+            if i > 0 and len(row) > 0 and row[0].strip().lower() == "finished good":
+                fg_index = i
+                pn = row[1] if len(row) > 1 else ""
+                desc = row[2] if len(row) > 2 else ""
+
+                # Format: "PN - Description" (ignoring empty parts)
+                title_parts = [p for p in (pn, desc) if p.strip()]
+                if title_parts:
+                    title_text = " - ".join(title_parts)
+                break
+
+        # Remove the Finished Good row from the table dataset
+        if fg_index != -1:
+            rows.pop(fg_index)
+
+        # 3. Drop the first column ("Type") entirely from all rows
+        if max_cols > 0:
+            rows = [r[1:] for r in rows]
+            max_cols -= 1
+
+        # 4. Drop up to 2 trailing columns if they are completely blank
         for _ in range(2):
             if max_cols > 0 and all(row[-1].strip() == "" for row in rows):
                 max_cols -= 1
@@ -97,11 +119,12 @@ class BomPdfPublisher(inkex.EffectExtension):
 
         num_cols = max_cols
 
-        # 3. Calculate column widths (3rd column is 3x width)
+        # 5. Calculate column widths
+        # Note: Description is now index 1 because the Type column is gone
         margin = 30
         base_col_width = 100
         col_widths = [
-            base_col_width * 3 if i == 2 else base_col_width for i in range(num_cols)
+            base_col_width * 3 if i == 1 else base_col_width for i in range(num_cols)
         ]
 
         def get_col_x(idx):
@@ -110,17 +133,19 @@ class BomPdfPublisher(inkex.EffectExtension):
         total_table_width = sum(col_widths)
         bom_page_width = total_table_width + (margin * 2)
 
-        # 4. Process text wrapping and dynamic row heights
+        # 6. Process text wrapping and dynamic row heights
         line_height = 14
         padding_y = 12
-        total_height = margin * 2
+        title_space = 30
+        total_height = (margin * 2) + title_space
         processed_rows = []
 
         for row in rows:
             processed_cells = []
             max_lines = 1
             for col_idx, cell_text in enumerate(row):
-                if col_idx == 2:
+                # Description is now index 1
+                if col_idx == 1:
                     chars_per_line = int(col_widths[col_idx] / 6.5)
                     wrapped = textwrap.wrap(cell_text, width=chars_per_line)
                     if not wrapped:
@@ -140,15 +165,28 @@ class BomPdfPublisher(inkex.EffectExtension):
 
         bom_page_height = total_height
 
-        # 5. Setup the Document Canvas
+        # 7. Setup the Document Canvas
         new_x, new_y = self.setup_pages(bom_page_width, bom_page_height)
 
         group = inkex.Group()
         group.set("id", "bom_table_group")
         group.transform = inkex.Transform(translate=(new_x + margin, new_y + margin))
 
-        # 6. Draw the Table
-        current_y = 0
+        # 8. Draw the Title (Finished Good Info)
+        title_elem = inkex.TextElement()
+        title_elem.set("x", "0")
+        title_elem.set("y", "0")  # Baseline is 0
+        title_elem.text = title_text
+        title_elem.style = {
+            "font-size": "16px",
+            "fill": "black",
+            "font-family": "sans-serif",
+            "font-weight": "bold",
+        }
+        group.append(title_elem)
+
+        # 9. Draw the Table (shifted down to make room for the title)
+        current_y = title_space
         for row_idx, row_data in enumerate(processed_rows):
             for col_idx, cell_data in enumerate(row_data["cells"]):
                 lines = cell_data["lines"]
@@ -162,12 +200,11 @@ class BomPdfPublisher(inkex.EffectExtension):
                     "font-family": "sans-serif",
                 }
 
-                # Bold the first row (headers)
                 if row_idx == 0:
                     text_elem.style["font-weight"] = "bold"
 
-                # Format column 2 (index 1) as a hyperlink
-                is_link = col_idx == 1 and row_idx > 0
+                # Format PN column (now index 0) as a hyperlink
+                is_link = col_idx == 0 and row_idx > 0
                 if is_link:
                     text_elem.style["fill"] = "#0056b3"
                     text_elem.style["text-decoration"] = "underline"
@@ -203,7 +240,7 @@ class BomPdfPublisher(inkex.EffectExtension):
 
         self.svg.append(group)
 
-        # 7. Save Temp SVG & Export PDF
+        # 10. Save Temp SVG & Export PDF
         original_file = self.options.input_file
         temp_dir = os.path.dirname(original_file) if original_file else None
 
@@ -228,7 +265,7 @@ class BomPdfPublisher(inkex.EffectExtension):
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
-        # 8. Clean up the document before passing it back to the live Inkscape GUI
+        # 11. Clean up live document
         for bom_elem in self.svg.xpath("//*[@id='bom_table_group']"):
             bom_elem.getparent().remove(bom_elem)
         for page_elem in self.svg.xpath("//inkscape:page[@id='bom_page']"):
