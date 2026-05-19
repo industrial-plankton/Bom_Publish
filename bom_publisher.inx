@@ -1,8 +1,13 @@
 <inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
     <name>Publish PDF with BOM</name>
     <id>org.eco_pipeline.export.bom_pdf</id>
-    <param name="pdf_path" type="path" mode="file_new" gui-text="Output PDF Location">C:\Users\User\Documents\output.pdf</param>
-    <param name="csv_path" type="path" mode="file" gui-text="Input CSV BOM">C:\Users\User\Documents\bom.csv</param>
+    <param name="pdf_path" type="path" mode="file_new" gui-text="Output PDF (Leave blank to use SVG's folder/name)"></param>
+    <param name="allow_overwrite" type="bool" gui-text="Overwrite existing PDF">false</param>
+    <param name="csv_path_1" type="path" mode="file" gui-text="BOM CSV 1"></param>
+    <param name="csv_path_2" type="path" mode="file" gui-text="BOM CSV 2 (Optional)"></param>
+    <param name="csv_path_3" type="path" mode="file" gui-text="BOM CSV 3 (Optional)"></param>
+    <param name="csv_path_4" type="path" mode="file" gui-text="BOM CSV 4 (Optional)"></param>
+    <param name="csv_path_5" type="path" mode="file" gui-text="BOM CSV 5 (Optional)"></param>
     <effect>
         <object-type>all</object-type>
         <effects-menu>
