@@ -21,7 +21,7 @@ def get_freq_tag(pn, desc):
 class BomPdfPublisher(inkex.EffectExtension):
     def add_arguments(self, pars):
         pars.add_argument("--pdf_path", type=str, default="")
-        pars.add_argument("--allow_overwrite", type=inkex.Boolean, default=False)
+        pars.add_argument("--allow_overwrite", type=inkex.utils.Boolean, default=False)
         pars.add_argument("--csv_path_1", type=str, default="")
         pars.add_argument("--csv_path_2", type=str, default="")
         pars.add_argument("--csv_path_3", type=str, default="")
