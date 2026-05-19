@@ -1,6 +1,7 @@
 import csv
 import os
 import tempfile
+import textwrap
 
 import inkex
 import lxml.etree
@@ -17,7 +18,7 @@ class BomPdfPublisher(inkex.EffectExtension):
         )
 
     def setup_pages(self, bom_width, bom_height):
-        # 1. Clean up old BOMs from previous runs of this script
+        # Clean up old BOMs from previous runs
         for old_bom in self.svg.xpath("//*[@id='bom_table_group']"):
             old_bom.getparent().remove(old_bom)
         for old_page in self.svg.xpath("//inkscape:page[@id='bom_page']"):
@@ -25,16 +26,13 @@ class BomPdfPublisher(inkex.EffectExtension):
 
         namedviews = self.svg.xpath("//sodipodi:namedview")
         if not namedviews:
-            inkex.utils.errormsg(
-                "No namedview found in SVG. Document may be malformed."
-            )
+            inkex.utils.errormsg("No namedview found in SVG.")
             return 0, 0
 
         namedview = namedviews[0]
         pages = self.svg.xpath("//sodipodi:namedview/inkscape:page")
 
-        # 2. If the original drawing has no explicit pages (standard for older/single-page SVGs),
-        # we must define Page 1 so Inkscape knows it's a multi-page document.
+        # Ensure Page 1 is explicitly defined
         if not pages:
             lxml.etree.SubElement(
                 namedview,
@@ -49,7 +47,6 @@ class BomPdfPublisher(inkex.EffectExtension):
             )
             pages = self.svg.xpath("//sodipodi:namedview/inkscape:page")
 
-        # 3. Calculate position for the new BOM page
         last_page = pages[-1]
         last_x = float(last_page.get("x", 0))
         last_y = float(last_page.get("y", 0))
@@ -58,7 +55,6 @@ class BomPdfPublisher(inkex.EffectExtension):
         new_x = last_x + last_w + 50
         new_y = last_y
 
-        # 4. Add the BOM page
         lxml.etree.SubElement(
             namedview,
             inkex.addNS("page", "inkscape"),
@@ -78,10 +74,6 @@ class BomPdfPublisher(inkex.EffectExtension):
             inkex.utils.errormsg("CSV file not found.")
             return
 
-        margin = 20
-        row_height = 20
-        col_width = 150
-
         with open(self.options.csv_path, "r", encoding="utf-8") as f:
             reader = csv.reader(f)
             rows = list(reader)
@@ -90,37 +82,95 @@ class BomPdfPublisher(inkex.EffectExtension):
             inkex.utils.errormsg("CSV is empty.")
             return
 
-        num_rows = len(rows)
-        num_cols = max(len(r) for r in rows)
+        # 1. Normalize row lengths
+        max_cols = max(len(r) for r in rows)
+        rows = [r + [""] * (max_cols - len(r)) for r in rows]
 
-        bom_page_width = (num_cols * col_width) + (margin * 2)
-        bom_page_height = (num_rows * row_height) + (margin * 2)
+        # 2. Drop up to 2 trailing columns if they are completely blank
+        for _ in range(2):
+            if max_cols > 0 and all(row[-1].strip() == "" for row in rows):
+                max_cols -= 1
+                rows = [r[:-1] for r in rows]
 
+        num_cols = max_cols
+
+        # 3. Calculate column widths (3rd column is 3x width)
+        margin = 30
+        base_col_width = 100
+        col_widths = [
+            base_col_width * 3 if i == 2 else base_col_width for i in range(num_cols)
+        ]
+
+        def get_col_x(idx):
+            return sum(col_widths[:idx])
+
+        bom_page_width = sum(col_widths) + (margin * 2)
+
+        # 4. Process text wrapping and dynamic row heights
+        line_height = 14
+        padding_y = 12
+        total_height = margin * 2
+        processed_rows = []
+
+        for row in rows:
+            processed_cells = []
+            max_lines = 1
+            for col_idx, cell_text in enumerate(row):
+                if col_idx == 2:
+                    # Estimate char capacity: width / ~6.5px per char for a 12px sans font
+                    chars_per_line = int(col_widths[col_idx] / 6.5)
+                    wrapped = textwrap.wrap(cell_text, width=chars_per_line)
+                    if not wrapped:
+                        wrapped = [""]
+                else:
+                    wrapped = [cell_text]
+
+                max_lines = max(max_lines, len(wrapped))
+                processed_cells.append(wrapped)
+
+            row_height = (max_lines * line_height) + padding_y
+            processed_rows.append({"cells": processed_cells, "height": row_height})
+            total_height += row_height
+
+        bom_page_height = total_height
+
+        # 5. Setup the Document Canvas
         new_x, new_y = self.setup_pages(bom_page_width, bom_page_height)
 
-        # Draw the BOM Table
         group = inkex.Group()
-        group.set(
-            "id", "bom_table_group"
-        )  # ID allows us to clean this up on future runs
+        group.set("id", "bom_table_group")
         group.transform = inkex.Transform(translate=(new_x + margin, new_y + margin))
 
-        for row_idx, row in enumerate(rows):
-            for col_idx, cell_text in enumerate(row):
-                text = inkex.TextElement()
-                text.set("x", str(col_idx * col_width))
-                text.set("y", str((row_idx * row_height) + 12))
-                text.text = str(cell_text)
-                text.style = {
+        # 6. Draw the Table
+        current_y = 0
+        for row_data in processed_rows:
+            for col_idx, lines in enumerate(row_data["cells"]):
+                col_x = get_col_x(col_idx)
+
+                text_elem = inkex.TextElement()
+                text_elem.style = {
                     "font-size": "12px",
                     "fill": "black",
                     "font-family": "sans-serif",
                 }
-                group.append(text)
+
+                # Render each wrapped line as a tspan element stacked vertically
+                for line_idx, line in enumerate(lines):
+                    tspan = inkex.Tspan()
+                    tspan.set("x", str(col_x))
+                    tspan.set(
+                        "y", str(current_y + line_height + (line_idx * line_height))
+                    )
+                    tspan.text = line
+                    text_elem.append(tspan)
+
+                group.append(text_elem)
+
+            current_y += row_data["height"]
 
         self.svg.append(group)
 
-        # Save Temp SVG & Export PDF
+        # 7. Save Temp SVG & Export PDF
         original_file = self.options.input_file
         temp_dir = os.path.dirname(original_file) if original_file else None
 
@@ -134,8 +184,6 @@ class BomPdfPublisher(inkex.EffectExtension):
             with open(temp_path, "wb") as f:
                 f.write(lxml.etree.tostring(self.document))
 
-            # Exporting without `export_area_page` forces Inkscape to fall back
-            # to its native multi-page document export behavior
             inkscape(
                 temp_path,
                 export_filename=self.options.pdf_path,
