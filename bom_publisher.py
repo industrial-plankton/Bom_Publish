@@ -104,7 +104,8 @@ class BomPdfPublisher(inkex.EffectExtension):
         def get_col_x(idx):
             return sum(col_widths[:idx])
 
-        bom_page_width = sum(col_widths) + (margin * 2)
+        total_table_width = sum(col_widths)
+        bom_page_width = total_table_width + (margin * 2)
 
         # 4. Process text wrapping and dynamic row heights
         line_height = 14
@@ -117,7 +118,6 @@ class BomPdfPublisher(inkex.EffectExtension):
             max_lines = 1
             for col_idx, cell_text in enumerate(row):
                 if col_idx == 2:
-                    # Estimate char capacity: width / ~6.5px per char for a 12px sans font
                     chars_per_line = int(col_widths[col_idx] / 6.5)
                     wrapped = textwrap.wrap(cell_text, width=chars_per_line)
                     if not wrapped:
@@ -126,7 +126,11 @@ class BomPdfPublisher(inkex.EffectExtension):
                     wrapped = [cell_text]
 
                 max_lines = max(max_lines, len(wrapped))
-                processed_cells.append(wrapped)
+
+                # Store the wrapped lines alongside the raw text needed for the URL
+                processed_cells.append(
+                    {"lines": wrapped, "original": cell_text.strip()}
+                )
 
             row_height = (max_lines * line_height) + padding_y
             processed_rows.append({"cells": processed_cells, "height": row_height})
@@ -143,8 +147,10 @@ class BomPdfPublisher(inkex.EffectExtension):
 
         # 6. Draw the Table
         current_y = 0
-        for row_data in processed_rows:
-            for col_idx, lines in enumerate(row_data["cells"]):
+        for row_idx, row_data in enumerate(processed_rows):
+            for col_idx, cell_data in enumerate(row_data["cells"]):
+                lines = cell_data["lines"]
+                original_text = cell_data["original"]
                 col_x = get_col_x(col_idx)
 
                 text_elem = inkex.TextElement()
@@ -153,6 +159,16 @@ class BomPdfPublisher(inkex.EffectExtension):
                     "fill": "black",
                     "font-family": "sans-serif",
                 }
+
+                # Bold the first row (headers)
+                if row_idx == 0:
+                    text_elem.style["font-weight"] = "bold"
+
+                # Format column 2 (index 1) as a hyperlink
+                is_link = col_idx == 1 and row_idx > 0
+                if is_link:
+                    text_elem.style["fill"] = "#0056b3"  # Blue link color
+                    text_elem.style["text-decoration"] = "underline"
 
                 # Render each wrapped line as a tspan element stacked vertically
                 for line_idx, line in enumerate(lines):
@@ -164,9 +180,28 @@ class BomPdfPublisher(inkex.EffectExtension):
                     tspan.text = line
                     text_elem.append(tspan)
 
-                group.append(text_elem)
+                # If it's a link, wrap the text element in an SVG Anchor (<a>) tag
+                if is_link and original_text:
+                    # Strip everything after the first dash for the URL
+                    base_pn = original_text.split("-")[0]
+                    a = lxml.etree.Element("{http://www.w3.org/2000/svg}a")
+                    a.set(
+                        "{http://www.w3.org/1999/xlink}href",
+                        f"https://industrialplankton.net/parts/{base_pn}",
+                    )
+                    a.append(text_elem)
+                    group.append(a)
+                else:
+                    group.append(text_elem)
 
             current_y += row_data["height"]
+
+            # Draw a line immediately after the first row
+            if row_idx == 0:
+                line = inkex.PathElement()
+                line.set("d", f"M 0,{current_y} L {total_table_width},{current_y}")
+                line.style = {"stroke": "black", "stroke-width": "1px"}
+                group.append(line)
 
         self.svg.append(group)
 
