@@ -152,6 +152,8 @@ class BomPdfPublisher(inkex.EffectExtension):
                     all_parts[key][tag].append(row)
 
             merged_rows = [header_row] if header_row else []
+            standard_rows = []
+            flagged_rows = []
 
             for key in ordered_pns:
                 tag_dict = all_parts[key]
@@ -176,7 +178,13 @@ class BomPdfPublisher(inkex.EffectExtension):
                         elif len(new_row) > 1:
                             new_row[1] = str(new_row[1]) + flag
 
-                    merged_rows.append(new_row)
+                        flagged_rows.append(new_row)
+                    else:
+                        standard_rows.append(new_row)
+
+            # Append the flagged differences right under the header, followed by the standard shared rows
+            merged_rows.extend(flagged_rows)
+            merged_rows.extend(standard_rows)
 
             return [{"title_segments": title_segments, "rows": merged_rows}]
 
