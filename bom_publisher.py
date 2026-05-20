@@ -23,6 +23,7 @@ class BomPdfPublisher(inkex.EffectExtension):
             pars.add_argument(f"--csv_path_{i}", type=str, default="")
             pars.add_argument(f"--csv_{i}_115", type=Boolean, default=False)
             pars.add_argument(f"--csv_{i}_230", type=Boolean, default=False)
+            pars.add_argument(f"--csv_{i}_g2", type=Boolean, default=False)
 
     def get_doc_path(self):
         """Attempts to find the absolute path of the currently opened SVG document."""
@@ -74,6 +75,125 @@ class BomPdfPublisher(inkex.EffectExtension):
                 rows = [r[:-1] for r in rows]
 
         return {"fg_pn": fg_pn, "fg_desc": fg_desc, "rows": rows}
+
+    def process_bom_group(self, raw_boms):
+        """Processes a separated group of BOMs, applying merge logic if both 115 and 230 tags are present."""
+        if not raw_boms:
+            return []
+
+        has_115 = any(b["tag"] == "115" for b in raw_boms)
+        has_230 = any(b["tag"] == "230" for b in raw_boms)
+
+        # Merge Logic for 115V/60Hz and 230V/50Hz
+        if len(raw_boms) >= 2 and has_115 and has_230:
+            bom_115 = next((b for b in raw_boms if b["tag"] == "115"), None)
+            bom_230 = next((b for b in raw_boms if b["tag"] == "230"), None)
+
+            pn_115 = bom_115["fg_pn"] if bom_115 else ""
+            pn_230 = bom_230["fg_pn"] if bom_230 else ""
+
+            desc_115 = bom_115["fg_desc"] if bom_115 else ""
+
+            # Strip possible loose formatting to keep the title clean
+            clean_desc = re.sub(r"(?i)\b(115|230)v\b", "", desc_115).strip()
+            clean_desc = re.sub(r"(?i)\b(50|60)\s*hz\b", "", clean_desc).strip()
+            clean_desc = re.sub(r"(?i)115v/60hz\b", "", clean_desc).strip()
+            clean_desc = re.sub(r"(?i)230v/50hz\b", "", clean_desc).strip()
+            clean_desc = clean_desc.replace("()", "").replace("  ", " ").strip()
+            if clean_desc.startswith("- "):
+                clean_desc = clean_desc[2:]
+            if clean_desc.endswith(" -"):
+                clean_desc = clean_desc[:-2]
+            clean_desc = clean_desc.strip()
+
+            title_segments = []
+            if pn_115:
+                title_segments.append({"text": pn_115, "link": pn_115})
+                title_segments.append({"text": " (115V/60Hz)", "link": None})
+            if pn_115 and pn_230:
+                title_segments.append({"text": " / ", "link": None})
+            if pn_230:
+                title_segments.append({"text": pn_230, "link": pn_230})
+                title_segments.append({"text": " (230V/50Hz)", "link": None})
+
+            if clean_desc:
+                title_segments.append({"text": f" - {clean_desc}", "link": None})
+
+            header_row = raw_boms[0]["rows"][0] if raw_boms[0]["rows"] else []
+            for b in raw_boms:
+                if b["rows"]:
+                    b["rows"].pop(0)
+
+            all_parts = {}
+            ordered_pns = []
+            available_tags = set()
+
+            for b in raw_boms:
+                if b["tag"] == "115":
+                    tag = "115V/60Hz"
+                elif b["tag"] == "230":
+                    tag = "230V/50Hz"
+                else:
+                    tag = "Other"
+
+                available_tags.add(tag)
+
+                for row in b["rows"]:
+                    pn = row[0] if len(row) > 0 else ""
+                    key = pn if pn.strip() else str(row)
+
+                    if key not in all_parts:
+                        ordered_pns.append(key)
+                        all_parts[key] = {}
+
+                    if tag not in all_parts[key]:
+                        all_parts[key][tag] = []
+
+                    all_parts[key][tag].append(row)
+
+            merged_rows = [header_row] if header_row else []
+
+            for key in ordered_pns:
+                tag_dict = all_parts[key]
+                unique_rows = {}
+
+                for tag, rows_for_tag in tag_dict.items():
+                    for row in rows_for_tag:
+                        t_row = tuple(row)
+                        if t_row not in unique_rows:
+                            unique_rows[t_row] = []
+                        if tag not in unique_rows[t_row]:
+                            unique_rows[t_row].append(tag)
+
+                for t_row, tags in unique_rows.items():
+                    new_row = list(t_row)
+
+                    if len(tags) < len(available_tags):
+                        flag = f" ({'/'.join(tags)})"
+                        # Flagging difference strictly in the Quantity Column (index 2)
+                        if len(new_row) > 2:
+                            new_row[2] = str(new_row[2]) + flag
+                        elif len(new_row) > 1:
+                            new_row[1] = str(new_row[1]) + flag
+
+                    merged_rows.append(new_row)
+
+            return [{"title_segments": title_segments, "rows": merged_rows}]
+
+        else:
+            # Standard formatting for unmerged groups
+            for b in raw_boms:
+                ts = []
+                if b["fg_pn"]:
+                    ts.append({"text": b["fg_pn"], "link": b["fg_pn"]})
+                if b["fg_desc"]:
+                    sep = " - " if b["fg_pn"] else ""
+                    ts.append({"text": f"{sep}{b['fg_desc']}", "link": None})
+                if not ts:
+                    ts.append({"text": "Bill of Materials", "link": None})
+                b["title_segments"] = ts
+
+            return raw_boms
 
     def layout_bom(self, raw_bom):
         title_segments = raw_bom.get("title_segments", [])
@@ -266,30 +386,60 @@ class BomPdfPublisher(inkex.EffectExtension):
             return
 
         potential_paths = [
-            (self.options.csv_path_1, self.options.csv_1_115, self.options.csv_1_230),
-            (self.options.csv_path_2, self.options.csv_2_115, self.options.csv_2_230),
-            (self.options.csv_path_3, self.options.csv_3_115, self.options.csv_3_230),
-            (self.options.csv_path_4, self.options.csv_4_115, self.options.csv_4_230),
-            (self.options.csv_path_5, self.options.csv_5_115, self.options.csv_5_230),
+            (
+                self.options.csv_path_1,
+                self.options.csv_1_115,
+                self.options.csv_1_230,
+                self.options.csv_1_g2,
+            ),
+            (
+                self.options.csv_path_2,
+                self.options.csv_2_115,
+                self.options.csv_2_230,
+                self.options.csv_2_g2,
+            ),
+            (
+                self.options.csv_path_3,
+                self.options.csv_3_115,
+                self.options.csv_3_230,
+                self.options.csv_3_g2,
+            ),
+            (
+                self.options.csv_path_4,
+                self.options.csv_4_115,
+                self.options.csv_4_230,
+                self.options.csv_4_g2,
+            ),
+            (
+                self.options.csv_path_5,
+                self.options.csv_5_115,
+                self.options.csv_5_230,
+                self.options.csv_5_g2,
+            ),
         ]
 
         csv_files = []
-        for path, is_115, is_230 in potential_paths:
+        for path, is_115, is_230, is_g2 in potential_paths:
             if path and os.path.isfile(path) and path.lower().endswith(".csv"):
                 tag = "other"
                 if is_115:
                     tag = "115"
                 elif is_230:
                     tag = "230"
-                csv_files.append({"path": path, "tag": tag})
+                group = 2 if is_g2 else 1
+                csv_files.append({"path": path, "tag": tag, "group": group})
 
-        # Auto-detect fallback (Defaults to 'other' if the UI is completely blank)
+        # Auto-detect fallback
         if not csv_files:
             if target_dir and os.path.exists(target_dir):
                 for f in os.listdir(target_dir):
                     if f.lower().endswith(".csv"):
                         csv_files.append(
-                            {"path": os.path.join(target_dir, f), "tag": "other"}
+                            {
+                                "path": os.path.join(target_dir, f),
+                                "tag": "other",
+                                "group": 1,
+                            }
                         )
 
             if not csv_files:
@@ -298,130 +448,29 @@ class BomPdfPublisher(inkex.EffectExtension):
                 )
                 return
 
-        raw_boms = []
+        boms_g1 = []
+        boms_g2 = []
+
         for csv_info in csv_files:
             data = self.read_and_clean_csv(csv_info["path"])
             if data and data["rows"]:
                 data["tag"] = csv_info["tag"]
-                raw_boms.append(data)
+                if csv_info["group"] == 2:
+                    boms_g2.append(data)
+                else:
+                    boms_g1.append(data)
 
-        if not raw_boms:
+        if not boms_g1 and not boms_g2:
             inkex.utils.errormsg("CSVs were empty or unreadable.")
             return
 
-        has_115 = any(b["tag"] == "115" for b in raw_boms)
-        has_230 = any(b["tag"] == "230" for b in raw_boms)
-
-        # Merge Logic for 115V/60Hz and 230V/50Hz checkboxes
-        if len(raw_boms) >= 2 and has_115 and has_230:
-            bom_115 = next((b for b in raw_boms if b["tag"] == "115"), None)
-            bom_230 = next((b for b in raw_boms if b["tag"] == "230"), None)
-
-            pn_115 = bom_115["fg_pn"] if bom_115 else ""
-            pn_230 = bom_230["fg_pn"] if bom_230 else ""
-
-            desc_115 = bom_115["fg_desc"] if bom_115 else ""
-
-            # Strip possible loose formatting to keep the title clean
-            clean_desc = re.sub(r"(?i)\b(115|230)v\b", "", desc_115).strip()
-            clean_desc = re.sub(r"(?i)\b(50|60)\s*hz\b", "", clean_desc).strip()
-            clean_desc = re.sub(r"(?i)115v/60hz\b", "", clean_desc).strip()
-            clean_desc = re.sub(r"(?i)230v/50hz\b", "", clean_desc).strip()
-            clean_desc = clean_desc.replace("()", "").replace("  ", " ").strip()
-            if clean_desc.startswith("- "):
-                clean_desc = clean_desc[2:]
-            if clean_desc.endswith(" -"):
-                clean_desc = clean_desc[:-2]
-            clean_desc = clean_desc.strip()
-
-            title_segments = []
-            if pn_115:
-                title_segments.append({"text": pn_115, "link": pn_115})
-                title_segments.append({"text": " (115V/60Hz)", "link": None})
-            if pn_115 and pn_230:
-                title_segments.append({"text": " / ", "link": None})
-            if pn_230:
-                title_segments.append({"text": pn_230, "link": pn_230})
-                title_segments.append({"text": " (230V/50Hz)", "link": None})
-
-            if clean_desc:
-                title_segments.append({"text": f" - {clean_desc}", "link": None})
-
-            header_row = raw_boms[0]["rows"][0] if raw_boms[0]["rows"] else []
-            for b in raw_boms:
-                if b["rows"]:
-                    b["rows"].pop(0)
-
-            all_parts = {}
-            ordered_pns = []
-            available_tags = set()
-
-            for b in raw_boms:
-                if b["tag"] == "115":
-                    tag = "115V/60Hz"
-                elif b["tag"] == "230":
-                    tag = "230V/50Hz"
-                else:
-                    tag = "Other"
-
-                available_tags.add(tag)
-
-                for row in b["rows"]:
-                    pn = row[0] if len(row) > 0 else ""
-                    key = pn if pn.strip() else str(row)
-
-                    if key not in all_parts:
-                        ordered_pns.append(key)
-                        all_parts[key] = {}
-
-                    if tag not in all_parts[key]:
-                        all_parts[key][tag] = []
-
-                    all_parts[key][tag].append(row)
-
-            merged_rows = [header_row] if header_row else []
-
-            for key in ordered_pns:
-                tag_dict = all_parts[key]
-                unique_rows = {}
-
-                for tag, rows_for_tag in tag_dict.items():
-                    for row in rows_for_tag:
-                        t_row = tuple(row)
-                        if t_row not in unique_rows:
-                            unique_rows[t_row] = []
-                        if tag not in unique_rows[t_row]:
-                            unique_rows[t_row].append(tag)
-
-                for t_row, tags in unique_rows.items():
-                    new_row = list(t_row)
-
-                    if len(tags) < len(available_tags):
-                        flag = f" ({'/'.join(tags)})"
-                        # Flagging difference strictly in the Quantity Column (index 2)
-                        if len(new_row) > 2:
-                            new_row[2] = str(new_row[2]) + flag
-                        elif len(new_row) > 1:
-                            new_row[1] = str(new_row[1]) + flag
-
-                    merged_rows.append(new_row)
-
-            raw_boms = [{"title_segments": title_segments, "rows": merged_rows}]
-
-        else:
-            for b in raw_boms:
-                ts = []
-                if b["fg_pn"]:
-                    ts.append({"text": b["fg_pn"], "link": b["fg_pn"]})
-                if b["fg_desc"]:
-                    sep = " - " if b["fg_pn"] else ""
-                    ts.append({"text": f"{sep}{b['fg_desc']}", "link": None})
-                if not ts:
-                    ts.append({"text": "Bill of Materials", "link": None})
-                b["title_segments"] = ts
+        # Process the groups independently
+        final_raw_boms = self.process_bom_group(boms_g1) + self.process_bom_group(
+            boms_g2
+        )
 
         bom_data_list = []
-        for raw_bom in raw_boms:
+        for raw_bom in final_raw_boms:
             data = self.layout_bom(raw_bom)
             if data:
                 bom_data_list.append(data)
@@ -434,6 +483,7 @@ class BomPdfPublisher(inkex.EffectExtension):
             line_height = bom_data["line_height"]
             col_widths = bom_data["col_widths"]
 
+            # Pre-calculate x-coordinates for all columns to avoid recalculating in the drawing loop
             col_x_offsets = [sum(col_widths[:idx]) for idx in range(len(col_widths))]
 
             group = inkex.Group()

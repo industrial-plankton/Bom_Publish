@@ -7,22 +7,27 @@
     <param name="csv_path_1" type="path" mode="file" gui-text="CSV 1 (Leave blank to auto-detect in SVG folder)"></param>
     <param name="csv_1_115" type="bool" gui-text="   ↳ Flag as 115V/60Hz">false</param>
     <param name="csv_1_230" type="bool" gui-text="   ↳ Flag as 230V/50Hz">false</param>
+    <param name="csv_1_g2" type="bool" gui-text="   ↳ Assign to Group 2">false</param>
 
     <param name="csv_path_2" type="path" mode="file" gui-text="CSV 2 (Optional)"></param>
     <param name="csv_2_115" type="bool" gui-text="   ↳ Flag as 115V/60Hz">false</param>
     <param name="csv_2_230" type="bool" gui-text="   ↳ Flag as 230V/50Hz">false</param>
+    <param name="csv_2_g2" type="bool" gui-text="   ↳ Assign to Group 2">false</param>
 
     <param name="csv_path_3" type="path" mode="file" gui-text="CSV 3 (Optional)"></param>
     <param name="csv_3_115" type="bool" gui-text="   ↳ Flag as 115V/60Hz">false</param>
     <param name="csv_3_230" type="bool" gui-text="   ↳ Flag as 230V/50Hz">false</param>
+    <param name="csv_3_g2" type="bool" gui-text="   ↳ Assign to Group 2">false</param>
 
     <param name="csv_path_4" type="path" mode="file" gui-text="CSV 4 (Optional)"></param>
     <param name="csv_4_115" type="bool" gui-text="   ↳ Flag as 115V/60Hz">false</param>
     <param name="csv_4_230" type="bool" gui-text="   ↳ Flag as 230V/50Hz">false</param>
+    <param name="csv_4_g2" type="bool" gui-text="   ↳ Assign to Group 2">false</param>
 
     <param name="csv_path_5" type="path" mode="file" gui-text="CSV 5 (Optional)"></param>
     <param name="csv_5_115" type="bool" gui-text="   ↳ Flag as 115V/60Hz">false</param>
     <param name="csv_5_230" type="bool" gui-text="   ↳ Flag as 230V/50Hz">false</param>
+    <param name="csv_5_g2" type="bool" gui-text="   ↳ Assign to Group 2">false</param>
 
     <effect needs-live-preview="false">
         <object-type>all</object-type>
