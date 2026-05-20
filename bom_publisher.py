@@ -8,25 +8,21 @@ import inkex
 import lxml.etree
 from inkex.command import inkscape
 
-
-def get_freq_tag(pn, desc):
-    combined = f"{pn} {desc}".lower()
-    if "50 hz" in combined or "50hz" in combined:
-        return "50 Hz"
-    if "60 hz" in combined or "60hz" in combined:
-        return "60 Hz"
-    return "Other"
+try:
+    from inkex.utils import Boolean
+except ImportError:
+    from inkex import Boolean
 
 
 class BomPdfPublisher(inkex.EffectExtension):
     def add_arguments(self, pars):
         pars.add_argument("--pdf_path", type=str, default="")
-        pars.add_argument("--allow_overwrite", type=inkex.utils.Boolean, default=False)
-        pars.add_argument("--csv_path_1", type=str, default="")
-        pars.add_argument("--csv_path_2", type=str, default="")
-        pars.add_argument("--csv_path_3", type=str, default="")
-        pars.add_argument("--csv_path_4", type=str, default="")
-        pars.add_argument("--csv_path_5", type=str, default="")
+        pars.add_argument("--allow_overwrite", type=Boolean, default=False)
+
+        for i in range(1, 6):
+            pars.add_argument(f"--csv_path_{i}", type=str, default="")
+            pars.add_argument(f"--csv_{i}_115", type=Boolean, default=False)
+            pars.add_argument(f"--csv_{i}_230", type=Boolean, default=False)
 
     def get_doc_path(self):
         """Attempts to find the absolute path of the currently opened SVG document."""
@@ -270,23 +266,31 @@ class BomPdfPublisher(inkex.EffectExtension):
             return
 
         potential_paths = [
-            self.options.csv_path_1,
-            self.options.csv_path_2,
-            self.options.csv_path_3,
-            self.options.csv_path_4,
-            self.options.csv_path_5,
+            (self.options.csv_path_1, self.options.csv_1_115, self.options.csv_1_230),
+            (self.options.csv_path_2, self.options.csv_2_115, self.options.csv_2_230),
+            (self.options.csv_path_3, self.options.csv_3_115, self.options.csv_3_230),
+            (self.options.csv_path_4, self.options.csv_4_115, self.options.csv_4_230),
+            (self.options.csv_path_5, self.options.csv_5_115, self.options.csv_5_230),
         ]
 
         csv_files = []
-        for path in potential_paths:
+        for path, is_115, is_230 in potential_paths:
             if path and os.path.isfile(path) and path.lower().endswith(".csv"):
-                csv_files.append(path)
+                tag = "other"
+                if is_115:
+                    tag = "115"
+                elif is_230:
+                    tag = "230"
+                csv_files.append({"path": path, "tag": tag})
 
+        # Auto-detect fallback (Defaults to 'other' if the UI is completely blank)
         if not csv_files:
             if target_dir and os.path.exists(target_dir):
                 for f in os.listdir(target_dir):
                     if f.lower().endswith(".csv"):
-                        csv_files.append(os.path.join(target_dir, f))
+                        csv_files.append(
+                            {"path": os.path.join(target_dir, f), "tag": "other"}
+                        )
 
             if not csv_files:
                 inkex.utils.errormsg(
@@ -295,62 +299,50 @@ class BomPdfPublisher(inkex.EffectExtension):
                 return
 
         raw_boms = []
-        for csv_file in csv_files:
-            data = self.read_and_clean_csv(csv_file)
+        for csv_info in csv_files:
+            data = self.read_and_clean_csv(csv_info["path"])
             if data and data["rows"]:
+                data["tag"] = csv_info["tag"]
                 raw_boms.append(data)
 
         if not raw_boms:
             inkex.utils.errormsg("CSVs were empty or unreadable.")
             return
 
-        has_50 = any(
-            get_freq_tag(b["fg_pn"], b["fg_desc"]) == "50 Hz" for b in raw_boms
-        )
-        has_60 = any(
-            get_freq_tag(b["fg_pn"], b["fg_desc"]) == "60 Hz" for b in raw_boms
-        )
+        has_115 = any(b["tag"] == "115" for b in raw_boms)
+        has_230 = any(b["tag"] == "230" for b in raw_boms)
 
-        if len(raw_boms) >= 2 and has_50 and has_60:
-            bom_50 = next(
-                (
-                    b
-                    for b in raw_boms
-                    if get_freq_tag(b["fg_pn"], b["fg_desc"]) == "50 Hz"
-                ),
-                None,
-            )
-            bom_60 = next(
-                (
-                    b
-                    for b in raw_boms
-                    if get_freq_tag(b["fg_pn"], b["fg_desc"]) == "60 Hz"
-                ),
-                None,
-            )
+        # Merge Logic for 115V/60Hz and 230V/50Hz checkboxes
+        if len(raw_boms) >= 2 and has_115 and has_230:
+            bom_115 = next((b for b in raw_boms if b["tag"] == "115"), None)
+            bom_230 = next((b for b in raw_boms if b["tag"] == "230"), None)
 
-            pn_50 = bom_50["fg_pn"] if bom_50 else ""
-            pn_60 = bom_60["fg_pn"] if bom_60 else ""
+            pn_115 = bom_115["fg_pn"] if bom_115 else ""
+            pn_230 = bom_230["fg_pn"] if bom_230 else ""
 
-            desc_50 = bom_50["fg_desc"] if bom_50 else ""
+            desc_115 = bom_115["fg_desc"] if bom_115 else ""
 
-            clean_desc = re.sub(r"(?i)\b(50|60)\s*hz\b", "", desc_50).strip()
-            clean_desc = re.sub(r"(?i)50/60\s*hz\b", "", clean_desc).strip()
+            # Strip possible loose formatting to keep the title clean
+            clean_desc = re.sub(r"(?i)\b(115|230)v\b", "", desc_115).strip()
+            clean_desc = re.sub(r"(?i)\b(50|60)\s*hz\b", "", clean_desc).strip()
+            clean_desc = re.sub(r"(?i)115v/60hz\b", "", clean_desc).strip()
+            clean_desc = re.sub(r"(?i)230v/50hz\b", "", clean_desc).strip()
             clean_desc = clean_desc.replace("()", "").replace("  ", " ").strip()
             if clean_desc.startswith("- "):
                 clean_desc = clean_desc[2:]
             if clean_desc.endswith(" -"):
                 clean_desc = clean_desc[:-2]
+            clean_desc = clean_desc.strip()
 
             title_segments = []
-            if pn_50:
-                title_segments.append({"text": pn_50, "link": pn_50})
-                title_segments.append({"text": " (50 Hz)", "link": None})
-            if pn_50 and pn_60:
+            if pn_115:
+                title_segments.append({"text": pn_115, "link": pn_115})
+                title_segments.append({"text": " (115V/60Hz)", "link": None})
+            if pn_115 and pn_230:
                 title_segments.append({"text": " / ", "link": None})
-            if pn_60:
-                title_segments.append({"text": pn_60, "link": pn_60})
-                title_segments.append({"text": " (60 Hz)", "link": None})
+            if pn_230:
+                title_segments.append({"text": pn_230, "link": pn_230})
+                title_segments.append({"text": " (230V/50Hz)", "link": None})
 
             if clean_desc:
                 title_segments.append({"text": f" - {clean_desc}", "link": None})
@@ -365,7 +357,13 @@ class BomPdfPublisher(inkex.EffectExtension):
             available_tags = set()
 
             for b in raw_boms:
-                tag = get_freq_tag(b["fg_pn"], b["fg_desc"])
+                if b["tag"] == "115":
+                    tag = "115V/60Hz"
+                elif b["tag"] == "230":
+                    tag = "230V/50Hz"
+                else:
+                    tag = "Other"
+
                 available_tags.add(tag)
 
                 for row in b["rows"]:
@@ -400,6 +398,7 @@ class BomPdfPublisher(inkex.EffectExtension):
 
                     if len(tags) < len(available_tags):
                         flag = f" ({'/'.join(tags)})"
+                        # Flagging difference strictly in the Quantity Column (index 2)
                         if len(new_row) > 2:
                             new_row[2] = str(new_row[2]) + flag
                         elif len(new_row) > 1:
@@ -435,7 +434,6 @@ class BomPdfPublisher(inkex.EffectExtension):
             line_height = bom_data["line_height"]
             col_widths = bom_data["col_widths"]
 
-            # Pre-calculate x-coordinates for all columns to avoid recalculating in the drawing loop
             col_x_offsets = [sum(col_widths[:idx]) for idx in range(len(col_widths))]
 
             group = inkex.Group()
